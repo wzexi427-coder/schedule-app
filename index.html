@@ -484,7 +484,7 @@
   <!-- Bottom bar: voice -->
   <div class="bottom-bar" id="page-today-bar">
     <div class="voice-area">
-      <div class="voice-hint" id="voice-hint">按住麦克风说出日程，例如：<br>「明天下午三点产品会，两小时」</div>
+      <div class="voice-hint" id="voice-hint">按住麦克风说出日程，支持多个：<br>「明天下午3点开会和面试」<br>「下周一见客户，周三去成都」</div>
       <button class="voice-btn" id="voice-btn" onclick="toggleVoice()">
         <span class="voice-icon">🎙</span>
         <span class="voice-stop-icon">⏹</span>
@@ -988,26 +988,33 @@ function stopVoice() {
 function resetHint() {
   const hint = document.getElementById('voice-hint');
   hint.className = 'voice-hint';
-  hint.innerHTML = '按住麦克风说出日程，例如：<br>「下个月15号去成都，三天」';
+  hint.innerHTML = '按住麦克风说出日程，支持多个：<br>「明天下午3点开会和面试」<br>「下周一见客户，周三去成都」';
 }
 
-// ── DeepSeek AI 解析 ──────────────────────────────────────────────────
+// ── DeepSeek AI 解析（支持多日程） ──────────────────────────────────────
 async function aiParseSchedule(text) {
   const now = new Date();
-  const prompt = `你是一个日程解析助手。用户会说一句话描述日程，你需要提取结构化信息。
+  const prompt = `你是一个日程解析助手。用户可能会一次说出多个日程，你需要分别提取结构化信息。
 
 当前时间：${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日 ${['日','一','二','三','四','五','六'][now.getDay()]}
 
 用户输入：「${text}」
 
 请严格按以下 JSON 格式返回，不要有任何其他文字：
-{"title":"日程标题（精简，去掉时间和地点之外的描述）","date":"YYYY-MM-DD","time":"HH:MM","duration":60}
+
+如果用户只说了1个日程，返回单个对象：
+{"title":"日程标题","date":"YYYY-MM-DD","time":"HH:MM","duration":60}
+
+如果用户说了多个日程，返回数组：
+[{"title":"日程标题1","date":"YYYY-MM-DD","time":"HH:MM","duration":60},{"title":"日程标题2","date":"YYYY-MM-DD","time":"HH:MM","duration":60}]
 
 规则：
-1. date 必须是 YYYY-MM-DD 格式，根据当前时间计算"下个月""下周三""大后天"等相对时间
-2. time 是 24 小时制，如果用户没说具体时间，根据语义推断合理时间（全天活动给 09:00）
-3. duration 单位分钟，没提到就默认 60
-4. title 只保留核心事件描述，去掉时间词和时长词`;
+1. 用顿号、逗号、分号、"还有"、"然后"、"接着"、"另外"等连接的多个日程，要拆分成独立的条目
+2. date 必须是 YYYY-MM-DD 格式，根据当前时间计算"下个月""下周三""大后天"等相对时间
+3. time 是 24 小时制，如果用户没说具体时间，根据语义推断合理时间（全天活动给 09:00）
+4. duration 单位分钟，没提到就默认 60
+5. title 只保留核心事件描述，去掉时间词和时长词
+6. 如果多个日程共享同一个时间/日期描述（如"明天下午3点开会和面试"），则它们时间相同`;
 
   const resp = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
@@ -1019,37 +1026,50 @@ async function aiParseSchedule(text) {
       model: 'deepseek-chat',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0,
-      max_tokens: 200
+      max_tokens: 800
     })
   });
 
-  if (!resp.ok) throw new Error(`API 返回 ${resp.status}`);
+  if (!resp.ok) throw new Error('API 返回 ' + resp.status);
   const data = await resp.json();
   const content = data.choices[0].message.content.trim();
 
-  // Extract JSON from response
-  const jsonMatch = content.match(/\{[\s\S]*?\}/);
-  if (!jsonMatch) throw new Error('AI 返回格式异常');
-
-  const parsed = JSON.parse(jsonMatch[0]);
-
-  // Validate
-  if (!parsed.date || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) {
-    throw new Error('日期解析失败');
-  }
-  if (!parsed.time || !/^\d{2}:\d{2}$/.test(parsed.time)) {
-    parsed.time = '09:00';
-  }
-  if (!parsed.duration || parsed.duration < 5) {
-    parsed.duration = 60;
+  // Try to parse as JSON array first, then as single object
+  let parsed;
+  try {
+    // Extract JSON from response (handle markdown code blocks)
+    const jsonStr = content.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    // Try to find JSON in the response
+    const arrMatch = content.match(/\[[\s\S]*\]/);
+    const objMatch = content.match(/\{[\s\S]*\}/);
+    const jsonStr = arrMatch ? arrMatch[0] : objMatch ? objMatch[0] : null;
+    if (!jsonStr) throw new Error('AI 返回格式异常');
+    parsed = JSON.parse(jsonStr);
   }
 
-  return {
-    title: parsed.title || text.slice(0, 20),
-    date: parsed.date,
-    time: parsed.time,
-    duration: parseInt(parsed.duration)
-  };
+  // Normalize to array
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+
+  // Validate and normalize each item
+  return items.map(item => {
+    if (!item.date || !/^\d{4}-\d{2}-\d{2}$/.test(item.date)) {
+      item.date = now.toISOString().slice(0, 10);
+    }
+    if (!item.time || !/^\d{2}:\d{2}$/.test(item.time)) {
+      item.time = '09:00';
+    }
+    if (!item.duration || item.duration < 5) {
+      item.duration = 60;
+    }
+    return {
+      title: item.title || text.slice(0, 20),
+      date: item.date,
+      time: item.time,
+      duration: parseInt(item.duration)
+    };
+  });
 }
 
 // ── NLP parser (with AI fallback) ─────────────────────────────────────
@@ -1061,11 +1081,37 @@ async function parseAndAdd(text) {
     try {
       hint.className = 'voice-hint processing';
       hint.textContent = 'AI 解析中...';
-      const result = await aiParseSchedule(text);
-      const conflicts = addEvent(result);
+      const results = await aiParseSchedule(text);
+      let conflictCount = 0;
+      let conflictNames = [];
+      results.forEach(r => {
+        const conflicts = addEvent(r);
+        if (conflicts.length) {
+          conflictCount++;
+          conflictNames.push(r.title);
+        }
+      });
+
       hint.className = 'voice-hint success';
-      hint.textContent = `✅ 已添加：${formatDate(result.date)} ${result.time} ${result.title}`;
-      setTimeout(resetHint, 3000);
+      if (results.length === 1) {
+        const r = results[0];
+        hint.textContent = '已添加：' + formatDate(r.date) + ' ' + r.time + ' ' + r.title;
+        if (conflictCount) {
+          setTimeout(() => {
+            hint.textContent = '注意：「' + conflictNames.join('、') + '」存在时间冲突';
+            hint.className = 'voice-hint error';
+          }, 2000);
+        }
+      } else {
+        hint.textContent = '已添加 ' + results.length + ' 个日程';
+        if (conflictCount) {
+          setTimeout(() => {
+            hint.textContent = '注意：其中 ' + conflictCount + ' 个存在时间冲突';
+            hint.className = 'voice-hint error';
+          }, 2000);
+        }
+      }
+      setTimeout(resetHint, 4000);
       return;
     } catch (err) {
       console.warn('AI parse failed, falling back to local:', err);
