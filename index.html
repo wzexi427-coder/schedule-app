@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="日程助手">
+<link rel="manifest" href="manifest.json">
+<title>日程助手</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  :root {
+    --bg: #0f0f1a;
+    --card: #1a1a2e;
+    --card2: #16213e;
+    --accent: #6c63ff;
+    --accent2: #a78bfa;
+    --danger: #ff4d6d;
+    --warn: #fbbf24;
+    --green: #34d399;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --border: #2d2d4e;
+    --radius: 16px;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif;
+    overflow: hidden;
+  }
+
+  #app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    max-width: 430px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  /* ── Header ── */
+  .header {
+    padding: env(safe-area-inset-top, 44px) 20px 16px;
+    background: linear-gradient(180deg, #12122b 0%, transparent 100%);
+    flex-shrink: 0;
+  }
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .app-title {
+    font-size: 22px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .today-badge {
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--card);
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+  }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    gap: 8px;
+    padding: 0 20px 12px;
+    flex-shrink: 0;
+  }
+  .tab {
+    flex: 1;
+    padding: 8px;
+    border-radius: 10px;
+    border: none;
+    background: var(--card);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .tab.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* ── Content ── */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 20px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .content::-webkit-scrollbar { display: none; }
+
+  /* ── Page ── */
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ── Today section ── */
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin: 16px 0 8px;
+  }
+
+  /* ── Event Card ── */
+  .event-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    position: relative;
+    animation: slideIn .25s ease;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .event-card.conflict {
+    border-color: var(--danger);
+    background: rgba(255,77,109,.08);
+  }
+  .event-time-block {
+    min-width: 52px;
+    text-align: center;
+  }
+  .event-time {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent2);
+    line-height: 1.2;
+  }
+  .event-dur {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .event-body { flex: 1; }
+  .event-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+    line-height: 1.3;
+  }
+  .event-date-label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .conflict-tag {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    font-size: 11px;
+    background: var(--danger);
+    color: #fff;
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-weight: 600;
+  }
+  .event-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .btn-sm {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn-sm:active { opacity: .7; }
+  .btn-sm.danger { border-color: var(--danger); color: var(--danger); }
+
+  /* ── Empty ── */
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .empty-icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-text { font-size: 14px; }
+
+  /* ── Bottom bar ── */
+  .bottom-bar {
+    padding: 12px 20px env(safe-area-inset-bottom, 16px);
+    background: var(--bg);
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Voice button ── */
+  .voice-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .voice-hint {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    min-height: 36px;
+    line-height: 1.5;
+    transition: color .2s;
+  }
+  .voice-hint.listening { color: var(--accent2); }
+  .voice-hint.processing { color: var(--warn); }
+  .voice-hint.success { color: var(--green); }
+  .voice-hint.error { color: var(--danger); }
+  .voice-btn {
+    width: 68px;
+    height: 68px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 0 rgba(108,99,255,.5);
+    transition: transform .15s;
+    position: relative;
+  }
+  .voice-btn.recording {
+    animation: pulse 1.2s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(108,99,255,.6); }
+    70%  { box-shadow: 0 0 0 20px rgba(108,99,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(108,99,255,0); }
+  }
+  .voice-btn:active { transform: scale(.93); }
+  .voice-icon { font-size: 28px; }
+  .voice-stop-icon { display: none; font-size: 22px; }
+  .voice-btn.recording .voice-icon { display: none; }
+  .voice-btn.recording .voice-stop-icon { display: block; }
+
+  /* ── Manual add ── */
+  .manual-form {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+  }
+  .form-row {
+    margin-bottom: 12px;
+  }
+  .form-row:last-child { margin-bottom: 0; }
+  .form-label {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    display: block;
+  }
+  .form-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
+    font-family: inherit;
+    -webkit-appearance: none;
+  }
+  .form-input:focus { border-color: var(--accent); }
+  .form-row-inline {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .btn-add {
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    border: none;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .btn-add:active { opacity: .85; }
+
+  /* ── Conflict summary ── */
+  .conflict-banner {
+    background: rgba(255,77,109,.12);
+    border: 1px solid var(--danger);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--danger);
+    display: none;
+  }
+  .conflict-banner.show { display: block; }
+  .conflict-banner strong { display: block; margin-bottom: 4px; font-size: 14px; }
+
+  /* ── Date group ── */
+  .date-group-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent2);
+    margin: 18px 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .date-group-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── Modal ── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.65);
+    display: flex;
+    align-items: flex-end;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s;
+  }
+  .modal-overlay.show {
+    opacity: 1;
+    pointer-events: all;
+  }
+  .modal {
+    width: 100%;
+    max-width: 430px;
+    margin: 0 auto;
+    background: var(--card2);
+    border-radius: 20px 20px 0 0;
+    padding: 20px 20px calc(env(safe-area-inset-bottom, 16px) + 20px);
+    transform: translateY(100%);
+    transition: transform .3s cubic-bezier(.32,1.25,.4,1);
+  }
+  .modal-overlay.show .modal { transform: translateY(0); }
+  .modal-title {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+  .modal-btns {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .modal-btn {
+    flex: 1;
+    padding: 12px;
+    border-radius: 12px;
+    border: none;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  .modal-btn:active { opacity: .8; }
+  .modal-btn.cancel { background: var(--card); color: var(--muted); }
+  .modal-btn.confirm { background: var(--accent); color: #fff; }
+  .modal-btn.delete { background: var(--danger); color: #fff; }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 16px) + 100px);
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(30,30,50,.95);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 20px;
+    border-radius: 100px;
+    font-size: 13px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: all .3s;
+    z-index: 200;
+    backdrop-filter: blur(12px);
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <div class="app-title">🗓 日程助手</div>
+      <div class="today-badge" id="todayBadge"></div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" data-tab="today">今天</button>
+    <button class="tab" data-tab="all">全部</button>
+    <button class="tab" data-tab="add">手动添加</button>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- Today Page -->
+    <div class="page active" id="page-today">
+      <div id="conflict-banner" class="conflict-banner"></div>
+      <div id="today-list"></div>
+    </div>
+
+    <!-- All Page -->
+    <div class="page" id="page-all">
+      <div id="all-list"></div>
+    </div>
+
+    <!-- Add Page -->
+    <div class="page" id="page-add">
+      <div class="section-title" style="margin-top:8px">手动添加日程</div>
+      <div class="manual-form">
+        <div class="form-row">
+          <label class="form-label">日程标题</label>
+          <input type="text" class="form-input" id="input-title" placeholder="例：产品评审会">
+        </div>
+        <div class="form-row-inline">
+          <div>
+            <label class="form-label">日期</label>
+            <input type="date" class="form-input" id="input-date">
+          </div>
+          <div>
+            <label class="form-label">开始时间</label>
+            <input type="time" class="form-input" id="input-start">
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="form-label">时长（分钟，可选）</label>
+          <input type="number" class="form-input" id="input-duration" placeholder="默认 60 分钟" min="5" max="480">
+        </div>
+        <div class="form-row">
+          <label class="form-label">备注（可选）</label>
+          <input type="text" class="form-input" id="input-note" placeholder="">
+        </div>
+        <button class="btn-add" id="btn-manual-add">添加日程</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom bar: voice -->
+  <div class="bottom-bar" id="page-today-bar">
+    <div class="voice-area">
+      <div class="voice-hint" id="voice-hint">按住麦克风说出日程，例如：<br>「明天下午三点产品会，两小时」</div>
+      <button class="voice-btn" id="voice-btn" onclick="toggleVoice()">
+        <span class="voice-icon">🎙</span>
+        <span class="voice-stop-icon">⏹</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <div class="modal-title">编辑日程</div>
+    <div class="form-row">
+      <label class="form-label">标题</label>
+      <input type="text" class="form-input" id="edit-title">
+    </div>
+    <div class="form-row-inline">
+      <div>
+        <label class="form-label">日期</label>
+        <input type="date" class="form-input" id="edit-date">
+      </div>
+      <div>
+        <label class="form-label">开始时间</label>
+        <input type="time" class="form-input" id="edit-start">
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label">时长（分钟）</label>
+      <input type="number" class="form-input" id="edit-duration" min="5" max="480">
+    </div>
+    <div class="form-row">
+      <label class="form-label">备注</label>
+      <input type="text" class="form-input" id="edit-note">
+    </div>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeModal()">取消</button>
+      <button class="modal-btn delete" onclick="deleteEvent()">删除</button>
+      <button class="modal-btn confirm" onclick="saveEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────
+let events = JSON.parse(localStorage.getItem('schedule_events') || '[]');
+let editingId = null;
+
+function save() {
+  localStorage.setItem('schedule_events', JSON.stringify(events));
+}
+
+// ── Utils ──────────────────────────────────────────────────────────────
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const days = ['日','一','二','三','四','五','六'];
+  const m = d.getMonth() + 1, day = d.getDate(), wd = days[d.getDay()];
+  const todayStr = today();
+  if (dateStr === todayStr) return `今天 · ${m}月${day}日 周${wd}`;
+  const tom = new Date(); tom.setDate(tom.getDate()+1);
+  if (dateStr === tom.toISOString().slice(0,10)) return `明天 · ${m}月${day}日 周${wd}`;
+  const yes = new Date(); yes.setDate(yes.getDate()-1);
+  if (dateStr === yes.toISOString().slice(0,10)) return `昨天 · ${m}月${day}日 周${wd}`;
+  return `${m}月${day}日 周${wd}`;
+}
+
+function fmtDur(min) {
+  if (!min) return '';
+  if (min < 60) return `${min}分钟`;
+  const h = Math.floor(min/60), m = min%60;
+  return m ? `${h}小时${m}分` : `${h}小时`;
+}
+
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => t.className = 'toast', 2200);
+}
+
+// ── Conflict detection ─────────────────────────────────────────────────
+function getRange(ev) {
+  if (!ev.date || !ev.time) return null;
+  const start = new Date(ev.date + 'T' + ev.time);
+  const end = new Date(start.getTime() + (ev.duration || 60) * 60000);
+  return { start, end };
+}
+
+function checkConflict(ev, excludeId) {
+  const r = getRange(ev);
+  if (!r) return [];
+  return events.filter(e => {
+    if (e.id === excludeId || e.date !== ev.date) return false;
+    const r2 = getRange(e);
+    if (!r2) return false;
+    return r.start < r2.end && r2.start < r.end;
+  });
+}
+
+function findAllConflicts() {
+  const conflicts = new Set();
+  for (let i = 0; i < events.length; i++) {
+    for (let j = i+1; j < events.length; j++) {
+      if (events[i].date !== events[j].date) continue;
+      const ri = getRange(events[i]), rj = getRange(events[j]);
+      if (!ri || !rj) continue;
+      if (ri.start < rj.end && rj.start < ri.end) {
+        conflicts.add(events[i].id);
+        conflicts.add(events[j].id);
+      }
+    }
+  }
+  return conflicts;
+}
+
+// ── Render ─────────────────────────────────────────────────────────────
+function renderAll() {
+  renderToday();
+  renderAllList();
+  updateTodayBadge();
+}
+
+function updateTodayBadge() {
+  const now = new Date();
+  const m = now.getMonth()+1, d = now.getDate();
+  const days = ['日','一','二','三','四','五','六'];
+  document.getElementById('todayBadge').textContent = `${m}/${d} 周${days[now.getDay()]}`;
+}
+
+function renderEventCard(ev, conflictSet) {
+  const isConflict = conflictSet.has(ev.id);
+  const card = document.createElement('div');
+  card.className = 'event-card' + (isConflict ? ' conflict' : '');
+  card.innerHTML = `
+    ${isConflict ? '<span class="conflict-tag">冲突</span>' : ''}
+    <div class="event-time-block">
+      <div class="event-time">${ev.time || '待定'}</div>
+      <div class="event-dur">${fmtDur(ev.duration)}</div>
+    </div>
+    <div class="event-body">
+      <div class="event-title">${ev.title}</div>
+      ${ev.note ? `<div class="event-date-label">${ev.note}</div>` : ''}
+      <div class="event-actions">
+        <button class="btn-sm" onclick="openEdit('${ev.id}')">编辑</button>
+        <button class="btn-sm danger" onclick="confirmDelete('${ev.id}')">删除</button>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
+function renderToday() {
+  const list = document.getElementById('today-list');
+  const banner = document.getElementById('conflict-banner');
+  const todayStr = today();
+  const todayEvents = events
+    .filter(e => e.date === todayStr)
+    .sort((a,b) => (a.time||'').localeCompare(b.time||''));
+
+  const conflictSet = findAllConflicts();
+  const todayConflicts = todayEvents.filter(e => conflictSet.has(e.id));
+
+  if (todayConflicts.length) {
+    banner.classList.add('show');
+    banner.innerHTML = `<strong>⚠️ 今日有 ${todayConflicts.length} 个日程存在时间冲突</strong>` +
+      todayConflicts.map(e => `· ${e.time} ${e.title}`).join('<br>');
+  } else {
+    banner.classList.remove('show');
+  }
+
+  list.innerHTML = '';
+  if (!todayEvents.length) {
+    list.innerHTML = `<div class="empty"><div class="empty-icon">🌟</div><div class="empty-text">今天暂无日程<br>用语音或手动添加吧</div></div>`;
+    return;
+  }
+  todayEvents.forEach(ev => list.appendChild(renderEventCard(ev, conflictSet)));
+}
+
+function renderAllList() {
+  const list = document.getElementById('all-list');
+  list.innerHTML = '';
+  if (!events.length) {
+    list.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">还没有任何日程</div></div>`;
+    return;
+  }
+  const sorted = [...events].sort((a,b) => {
+    const da = (a.date||'9999') + (a.time||'');
+    const db = (b.date||'9999') + (b.time||'');
+    return da.localeCompare(db);
+  });
+  const conflictSet = findAllConflicts();
+  const groups = {};
+  sorted.forEach(ev => {
+    const k = ev.date || 'nodate';
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(ev);
+  });
+  Object.entries(groups).forEach(([date, evs]) => {
+    const title = document.createElement('div');
+    title.className = 'date-group-title';
+    title.textContent = date !== 'nodate' ? formatDate(date) : '日期未定';
+    list.appendChild(title);
+    evs.forEach(ev => list.appendChild(renderEventCard(ev, conflictSet)));
+  });
+}
+
+// ── Add event ──────────────────────────────────────────────────────────
+function addEvent(ev) {
+  ev.id = uid();
+  const conflicts = checkConflict(ev);
+  events.push(ev);
+  save();
+  renderAll();
+  if (conflicts.length) {
+    showToast(`⚠️ 已添加，但与「${conflicts.map(c=>c.title).join('、')}」时间冲突`, 'warn');
+  } else {
+    showToast('✅ 日程已添加');
+  }
+  return conflicts;
+}
+
+// ── Manual add ────────────────────────────────────────────────────────
+document.getElementById('btn-manual-add').onclick = () => {
+  const title = document.getElementById('input-title').value.trim();
+  const date = document.getElementById('input-date').value;
+  const time = document.getElementById('input-start').value;
+  const dur = parseInt(document.getElementById('input-duration').value) || 60;
+  const note = document.getElementById('input-note').value.trim();
+  if (!title) { showToast('请输入日程标题'); return; }
+  if (!date)  { showToast('请选择日期'); return; }
+  if (!time)  { showToast('请选择开始时间'); return; }
+  addEvent({ title, date, time, duration: dur, note });
+  document.getElementById('input-title').value = '';
+  document.getElementById('input-note').value = '';
+};
+
+// Set default date to today
+document.getElementById('input-date').value = today();
+
+// ── Edit / Delete ──────────────────────────────────────────────────────
+function openEdit(id) {
+  const ev = events.find(e => e.id === id);
+  if (!ev) return;
+  editingId = id;
+  document.getElementById('edit-title').value = ev.title;
+  document.getElementById('edit-date').value = ev.date || '';
+  document.getElementById('edit-start').value = ev.time || '';
+  document.getElementById('edit-duration').value = ev.duration || 60;
+  document.getElementById('edit-note').value = ev.note || '';
+  document.getElementById('edit-modal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('edit-modal').classList.remove('show');
+  editingId = null;
+}
+
+function saveEdit() {
+  if (!editingId) return;
+  const idx = events.findIndex(e => e.id === editingId);
+  if (idx < 0) return;
+  const updated = {
+    id: editingId,
+    title: document.getElementById('edit-title').value.trim(),
+    date: document.getElementById('edit-date').value,
+    time: document.getElementById('edit-start').value,
+    duration: parseInt(document.getElementById('edit-duration').value) || 60,
+    note: document.getElementById('edit-note').value.trim()
+  };
+  if (!updated.title) { showToast('标题不能为空'); return; }
+  events[idx] = updated;
+  save();
+  renderAll();
+  closeModal();
+  const conflicts = checkConflict(updated, editingId);
+  showToast(conflicts.length ? `⚠️ 已保存，注意时间冲突` : '✅ 已保存');
+}
+
+function deleteEvent() {
+  if (!editingId) return;
+  events = events.filter(e => e.id !== editingId);
+  save();
+  renderAll();
+  closeModal();
+  showToast('🗑 已删除');
+}
+
+function confirmDelete(id) {
+  const ev = events.find(e => e.id === id);
+  if (!ev) return;
+  if (confirm(`确认删除「${ev.title}」？`)) {
+    events = events.filter(e => e.id !== id);
+    save();
+    renderAll();
+    showToast('🗑 已删除');
+  }
+}
+
+// Close modal on overlay click
+document.getElementById('edit-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+// ── Tabs ──────────────────────────────────────────────────────────────
+const tabs = document.querySelectorAll('.tab');
+const pages = document.querySelectorAll('.page');
+const bottomBar = document.getElementById('page-today-bar');
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    tabs.forEach(t => t.classList.remove('active'));
+    pages.forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    const id = tab.dataset.tab;
+    document.getElementById('page-' + id).classList.add('active');
+    bottomBar.style.display = (id === 'today') ? '' : 'none';
+  });
+});
+
+// ── Voice ──────────────────────────────────────────────────────────────
+let recognition = null;
+let isRecording = false;
+
+function toggleVoice() {
+  if (isRecording) {
+    stopVoice();
+  } else {
+    startVoice();
+  }
+}
+
+function startVoice() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showToast('当前浏览器不支持语音识别，请使用 Safari');
+    return;
+  }
+  recognition = new SpeechRecognition();
+  recognition.lang = 'zh-CN';
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  const btn = document.getElementById('voice-btn');
+  const hint = document.getElementById('voice-hint');
+
+  recognition.onstart = () => {
+    isRecording = true;
+    btn.classList.add('recording');
+    hint.className = 'voice-hint listening';
+    hint.textContent = '正在聆听... 请说出你的日程';
+  };
+  recognition.onresult = (e) => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+    hint.className = 'voice-hint processing';
+    hint.textContent = `听到：「${transcript}」`;
+    if (e.results[0].isFinal) {
+      parseAndAdd(transcript);
+    }
+  };
+  recognition.onerror = (e) => {
+    isRecording = false;
+    btn.classList.remove('recording');
+    hint.className = 'voice-hint error';
+    const msgs = {
+      'not-allowed': '麦克风权限被拒绝，请在设置中允许',
+      'no-speech': '没有检测到语音，请再试一次',
+      'network': '网络异常，请检查网络连接',
+    };
+    hint.textContent = msgs[e.error] || `识别出错：${e.error}`;
+    setTimeout(resetHint, 3000);
+  };
+  recognition.onend = () => {
+    isRecording = false;
+    btn.classList.remove('recording');
+  };
+  recognition.start();
+}
+
+function stopVoice() {
+  if (recognition) recognition.stop();
+  isRecording = false;
+  document.getElementById('voice-btn').classList.remove('recording');
+  resetHint();
+}
+
+function resetHint() {
+  const hint = document.getElementById('voice-hint');
+  hint.className = 'voice-hint';
+  hint.innerHTML = '按住麦克风说出日程，例如：<br>「明天下午三点产品会，两小时」';
+}
+
+// ── NLP parser ────────────────────────────────────────────────────────
+function parseAndAdd(text) {
+  const hint = document.getElementById('voice-hint');
+  const result = parseScheduleText(text);
+  if (!result) {
+    hint.className = 'voice-hint error';
+    hint.textContent = `未能识别日期时间，请重试\n说法示例：「明天下午3点开会一小时」`;
+    setTimeout(resetHint, 3000);
+    return;
+  }
+  const conflicts = addEvent(result);
+  hint.className = 'voice-hint success';
+  hint.textContent = `✅ 已添加：${result.date} ${result.time} ${result.title}`;
+  setTimeout(resetHint, 3000);
+}
+
+function parseScheduleText(text) {
+  const now = new Date();
+  let date = null, time = null, duration = 60, title = text;
+
+  // ── Date parsing ──
+  const dateMap = {
+    '今天|今日': 0, '明天|明日': 1, '后天': 2, '大后天': 3,
+    '昨天|昨日': -1, '前天': -2
+  };
+  let matched = false;
+  for (const [pat, offset] of Object.entries(dateMap)) {
+    if (new RegExp(pat).test(text)) {
+      const d = new Date(now);
+      d.setDate(d.getDate() + offset);
+      date = d.toISOString().slice(0, 10);
+      title = title.replace(new RegExp(pat), '');
+      matched = true;
+      break;
+    }
+  }
+  // 星期几
+  if (!matched) {
+    const weekdays = ['日','一','二','三','四','五','六'];
+    const wm = text.match(/(?:下?周|下?星期)([一二三四五六日天])/);
+    if (wm) {
+      let targetWd = weekdays.indexOf(wm[1] === '天' ? '日' : wm[1]);
+      const cur = now.getDay();
+      let diff = targetWd - cur;
+      if (/下/.test(wm[0]) || diff <= 0) diff += 7;
+      const d = new Date(now);
+      d.setDate(d.getDate() + diff);
+      date = d.toISOString().slice(0, 10);
+      title = title.replace(wm[0], '');
+      matched = true;
+    }
+  }
+  // M月D日
+  if (!matched) {
+    const mdm = text.match(/(\d{1,2})月(\d{1,2})(?:日|号)/);
+    if (mdm) {
+      const yr = now.getFullYear();
+      const d = new Date(yr, parseInt(mdm[1])-1, parseInt(mdm[2]));
+      date = d.toISOString().slice(0, 10);
+      title = title.replace(mdm[0], '');
+      matched = true;
+    }
+  }
+  if (!date) {
+    // default to today
+    date = now.toISOString().slice(0, 10);
+  }
+
+  // ── Time parsing ──
+  const timePeriods = {
+    '凌晨': 0, '早上|早晨|上午': 8, '中午': 12,
+    '下午|午后': 14, '傍晚': 17, '晚上|夜里|夜间|深夜': 20
+  };
+  let periodBase = -1;
+  for (const [pat, base] of Object.entries(timePeriods)) {
+    if (new RegExp(pat).test(text)) {
+      periodBase = base;
+      title = title.replace(new RegExp(pat), '');
+      break;
+    }
+  }
+  // HH:MM
+  let tm = text.match(/(\d{1,2})[：:](\d{2})/);
+  if (tm) {
+    let h = parseInt(tm[1]), m = parseInt(tm[2]);
+    if (periodBase >= 12 && h < 12) h += 12;
+    if (periodBase === 0 && h >= 12) h = 0;
+    time = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    title = title.replace(tm[0], '');
+  } else {
+    // X点Y分 or X点半
+    const ptm = text.match(/(\d{1,2})点(?:([一二三四五六七八九十\d]+)分|半)?/);
+    if (ptm) {
+      let h = parseInt(ptm[1]);
+      let m = 0;
+      if (ptm[2] === '半') m = 30;
+      else if (ptm[2]) {
+        m = parseChineseNum(ptm[2]);
+      }
+      if (periodBase >= 12 && h < 12) h += 12;
+      else if (periodBase === -1 && h < 7) h += 12; // 智能推断下午
+      if (periodBase === 0 && h >= 12) h = 0;
+      time = `${String(Math.min(h,23)).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+      title = title.replace(ptm[0], '');
+    }
+  }
+
+  // ── Duration parsing ──
+  const dm = text.match(/(\d+(?:\.\d+)?)\s*(?:个)?\s*小时(?:(\d+)分)?/);
+  if (dm) {
+    duration = Math.round(parseFloat(dm[1]) * 60) + (parseInt(dm[2]) || 0);
+    title = title.replace(dm[0], '');
+  } else {
+    const dm2 = text.match(/(\d+)\s*分钟/);
+    if (dm2) {
+      duration = parseInt(dm2[1]);
+      title = title.replace(dm2[0], '');
+    }
+  }
+
+  // ── Clean title ──
+  title = title
+    .replace(/，|,|。|\.|！|!|？|\?/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!title) title = text.replace(/[，,。.！!？?]/g, '').trim() || '日程';
+
+  return { title, date, time: time || '09:00', duration };
+}
+
+function parseChineseNum(s) {
+  if (/^\d+$/.test(s)) return parseInt(s);
+  const map = {'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,
+               '二十':20,'三十':30,'四十':40,'五十':50};
+  return map[s] || 0;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+renderAll();
+</script>
+</body>
+</html>
