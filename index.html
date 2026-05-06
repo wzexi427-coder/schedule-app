@@ -559,14 +559,52 @@
 <div class="toast" id="toast"></div>
 
 <script>
+// ── IndexedDB Storage Layer ──────────────────────────────────────────
+const DB_NAME = 'ScheduleAppDB';
+const DB_VER = 1;
+const STORE_NAME = 'appdata';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+function dbGet(key) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    tx.oncomplete = () => db.close();
+  }));
+}
+
+function dbSet(key, val) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(val, key);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
 // ── State ──────────────────────────────────────────────────────────────
-let events = JSON.parse(localStorage.getItem('schedule_events') || '[]');
+let events = [];
 let editingId = null;
-let apiKey = localStorage.getItem('schedule_ds_key') || '';
-let aiEnabled = localStorage.getItem('schedule_ai_enabled') !== 'false';
+let apiKey = '';
+let aiEnabled = true;
 
 function save() {
-  localStorage.setItem('schedule_events', JSON.stringify(events));
+  dbSet('events', events);
 }
 
 // ── Utils ──────────────────────────────────────────────────────────────
@@ -620,34 +658,27 @@ function closeSettings() {
 
 function saveSettings() {
   const inputEl = document.getElementById('input-api-key');
-  // Always use dataset.real as source of truth for the key
-  // (blur event keeps it updated; if user typed and didn't blur, real still has old value)
   const currentVal = inputEl.value.trim();
-  // Detect if this is a real key (starts with sk- and is long enough) vs masked
   if (currentVal.startsWith('sk-') && currentVal.length > 20) {
-    // User entered a real key
     apiKey = currentVal;
     inputEl.dataset.real = currentVal;
-    localStorage.setItem('schedule_ds_key', apiKey);
+    dbSet('apiKey', apiKey);
   } else if (inputEl.dataset.real && inputEl.dataset.real.startsWith('sk-')) {
-    // User didn't change the key, keep existing
     apiKey = inputEl.dataset.real;
   } else if (currentVal && !currentVal.includes('****')) {
-    // Fallback: any non-masked input
     apiKey = currentVal;
     inputEl.dataset.real = currentVal;
-    localStorage.setItem('schedule_ds_key', apiKey);
+    dbSet('apiKey', apiKey);
   }
-  // If field is empty, clear saved key
   if (!currentVal) {
     apiKey = '';
     inputEl.dataset.real = '';
-    localStorage.removeItem('schedule_ds_key');
+    dbSet('apiKey', '');
   }
   aiEnabled = document.getElementById('input-ai-toggle').checked;
-  localStorage.setItem('schedule_ai_enabled', aiEnabled);
+  dbSet('aiEnabled', aiEnabled);
   closeSettings();
-  showToast(aiEnabled && apiKey ? 'AI 解析已启用' : '已保存（使用离线解析模式）');
+  showToast(aiEnabled && apiKey ? 'AI 解析已启用（已持久保存）' : '已保存（使用离线解析模式）');
 }
 
 document.getElementById('input-api-key').addEventListener('focus', function() {
@@ -1180,17 +1211,41 @@ function parseChineseNum(s) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
-// Pre-fill API key if first time
-if (apiKey) {
-  // Key already set
-} else {
-  // Will prompt user on first voice use
-}
+(async function init() {
+  // Migrate from localStorage to IndexedDB (one-time)
+  try {
+    const oldEvents = localStorage.getItem('schedule_events');
+    const oldKey = localStorage.getItem('schedule_ds_key');
+    const oldAI = localStorage.getItem('schedule_ai_enabled');
+    if (oldEvents) {
+      events = JSON.parse(oldEvents);
+      await dbSet('events', events);
+      localStorage.removeItem('schedule_events');
+    }
+    if (oldKey) {
+      await dbSet('apiKey', oldKey);
+      localStorage.removeItem('schedule_ds_key');
+    }
+    if (oldAI !== null) {
+      await dbSet('aiEnabled', oldAI !== 'false');
+      localStorage.removeItem('schedule_ai_enabled');
+    }
+  } catch (e) { console.warn('Migration skip:', e); }
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
-}
-renderAll();
+  // Load from IndexedDB
+  try {
+    const saved = await dbGet('events');
+    if (Array.isArray(saved)) events = saved;
+    apiKey = await dbGet('apiKey') || '';
+    const savedAI = await dbGet('aiEnabled');
+    if (savedAI !== undefined && savedAI !== null) aiEnabled = savedAI;
+  } catch (e) { console.warn('DB load error:', e); }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
+  renderAll();
+})();
 </script>
 </body>
 </html>
