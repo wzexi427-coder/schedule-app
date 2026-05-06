@@ -532,11 +532,6 @@
   <div class="modal">
     <div class="modal-title">设置</div>
     <div class="form-row">
-      <label class="form-label">DeepSeek API Key</label>
-      <input type="password" class="form-input" id="input-api-key" placeholder="sk-...">
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">Key 仅存在你手机本地，不会上传到任何服务器</div>
-    </div>
-    <div class="form-row">
       <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" id="input-ai-toggle" style="width:auto;accent-color:var(--accent)">
         <span style="color:var(--text);font-size:14px">启用 AI 智能解析（推荐）</span>
@@ -544,7 +539,7 @@
       <div style="font-size:11px;color:var(--muted);margin-top:4px">开启后支持「下个月15号」「这周五下午」等自然语言</div>
     </div>
     <div class="modal-btns">
-      <button class="modal-btn cancel" onclick="closeSettings()">取消</button>
+      <button class="modal-btn cancel" onclick="closeSettings()">关闭</button>
       <button class="modal-btn confirm" onclick="saveSettings()">保存</button>
     </div>
   </div>
@@ -559,7 +554,10 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// ── IndexedDB Storage Layer ──────────────────────────────────────────
+// ── Config ──────────────────────────────────────────────────────────────
+const CONFIG_API_KEY = 'sk-8bb03a88087a4d029c564e584f2ac590';
+
+// ── Storage (dual: IndexedDB + localStorage) ───────────────────────────
 const DB_NAME = 'ScheduleAppDB';
 const DB_VER = 1;
 const STORE_NAME = 'appdata';
@@ -597,14 +595,31 @@ function dbSet(key, val) {
   }));
 }
 
+function persistGet(key) {
+  const ls = localStorage.getItem('sch_' + key);
+  const parsed = ls ? JSON.parse(ls) : null;
+  return dbGet(key).then(dbVal => {
+    // Prefer IndexedDB if exists and newer
+    if (dbVal !== undefined && dbVal !== null) return dbVal;
+    if (parsed !== null) return parsed;
+    return null;
+  }).catch(() => parsed);
+}
+
+function persistSet(key, val) {
+  // Write to both
+  localStorage.setItem('sch_' + key, JSON.stringify(val));
+  return dbSet(key, val).catch(() => {});
+}
+
 // ── State ──────────────────────────────────────────────────────────────
 let events = [];
 let editingId = null;
-let apiKey = '';
+const apiKey = CONFIG_API_KEY;
 let aiEnabled = true;
 
 function save() {
-  dbSet('events', events);
+  persistSet('events', events);
 }
 
 // ── Utils ──────────────────────────────────────────────────────────────
@@ -646,8 +661,6 @@ function showToast(msg, type='') {
 
 // ── Settings ───────────────────────────────────────────────────────────
 function openSettings() {
-  document.getElementById('input-api-key').value = apiKey ? apiKey.slice(0,4) + '****' + apiKey.slice(-4) : '';
-  document.getElementById('input-api-key').dataset.real = apiKey;
   document.getElementById('input-ai-toggle').checked = aiEnabled;
   document.getElementById('settings-modal').classList.add('show');
 }
@@ -657,44 +670,11 @@ function closeSettings() {
 }
 
 function saveSettings() {
-  const inputEl = document.getElementById('input-api-key');
-  const currentVal = inputEl.value.trim();
-  if (currentVal.startsWith('sk-') && currentVal.length > 20) {
-    apiKey = currentVal;
-    inputEl.dataset.real = currentVal;
-    dbSet('apiKey', apiKey);
-  } else if (inputEl.dataset.real && inputEl.dataset.real.startsWith('sk-')) {
-    apiKey = inputEl.dataset.real;
-  } else if (currentVal && !currentVal.includes('****')) {
-    apiKey = currentVal;
-    inputEl.dataset.real = currentVal;
-    dbSet('apiKey', apiKey);
-  }
-  if (!currentVal) {
-    apiKey = '';
-    inputEl.dataset.real = '';
-    dbSet('apiKey', '');
-  }
   aiEnabled = document.getElementById('input-ai-toggle').checked;
-  dbSet('aiEnabled', aiEnabled);
+  persistSet('aiEnabled', aiEnabled);
   closeSettings();
-  showToast(aiEnabled && apiKey ? 'AI 解析已启用（已持久保存）' : '已保存（使用离线解析模式）');
+  showToast(aiEnabled ? 'AI 解析已启用' : '已切换为离线解析模式');
 }
-
-document.getElementById('input-api-key').addEventListener('focus', function() {
-  this.type = 'text';
-  if (this.dataset.real && this.dataset.real.startsWith('sk-')) {
-    this.value = this.dataset.real;
-  }
-});
-document.getElementById('input-api-key').addEventListener('blur', function() {
-  const val = this.value.trim();
-  if (val && val.startsWith('sk-') && val.length > 20) {
-    this.dataset.real = val;
-    this.value = val.slice(0, 6) + '****' + val.slice(-4);
-  }
-  this.type = 'password';
-});
 
 document.getElementById('settings-modal').addEventListener('click', function(e) {
   if (e.target === this) closeSettings();
@@ -1212,34 +1192,19 @@ function parseChineseNum(s) {
 
 // ── Init ──────────────────────────────────────────────────────────────
 (async function init() {
-  // Migrate from localStorage to IndexedDB (one-time)
+  // Load events from persistent storage
   try {
-    const oldEvents = localStorage.getItem('schedule_events');
-    const oldKey = localStorage.getItem('schedule_ds_key');
-    const oldAI = localStorage.getItem('schedule_ai_enabled');
-    if (oldEvents) {
-      events = JSON.parse(oldEvents);
-      await dbSet('events', events);
-      localStorage.removeItem('schedule_events');
-    }
-    if (oldKey) {
-      await dbSet('apiKey', oldKey);
-      localStorage.removeItem('schedule_ds_key');
-    }
-    if (oldAI !== null) {
-      await dbSet('aiEnabled', oldAI !== 'false');
-      localStorage.removeItem('schedule_ai_enabled');
-    }
-  } catch (e) { console.warn('Migration skip:', e); }
-
-  // Load from IndexedDB
-  try {
-    const saved = await dbGet('events');
+    const saved = await persistGet('events');
     if (Array.isArray(saved)) events = saved;
-    apiKey = await dbGet('apiKey') || '';
-    const savedAI = await dbGet('aiEnabled');
-    if (savedAI !== undefined && savedAI !== null) aiEnabled = savedAI;
-  } catch (e) { console.warn('DB load error:', e); }
+    const savedAI = await persistGet('aiEnabled');
+    if (savedAI !== null && savedAI !== undefined) aiEnabled = savedAI;
+  } catch (e) {
+    // Fallback: try raw localStorage
+    try {
+      const old = localStorage.getItem('sch_events');
+      if (old) events = JSON.parse(old);
+    } catch(e2) {}
+  }
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
