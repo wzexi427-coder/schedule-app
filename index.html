@@ -619,26 +619,48 @@ function closeSettings() {
 }
 
 function saveSettings() {
-  const raw = document.getElementById('input-api-key').dataset.real || '';
-  const input = document.getElementById('input-api-key').value.trim();
-  // If user typed a new key (doesn't match masked format), save it
-  if (input && !input.includes('****')) {
-    apiKey = input;
+  const inputEl = document.getElementById('input-api-key');
+  // Always use dataset.real as source of truth for the key
+  // (blur event keeps it updated; if user typed and didn't blur, real still has old value)
+  const currentVal = inputEl.value.trim();
+  // Detect if this is a real key (starts with sk- and is long enough) vs masked
+  if (currentVal.startsWith('sk-') && currentVal.length > 20) {
+    // User entered a real key
+    apiKey = currentVal;
+    inputEl.dataset.real = currentVal;
     localStorage.setItem('schedule_ds_key', apiKey);
+  } else if (inputEl.dataset.real && inputEl.dataset.real.startsWith('sk-')) {
+    // User didn't change the key, keep existing
+    apiKey = inputEl.dataset.real;
+  } else if (currentVal && !currentVal.includes('****')) {
+    // Fallback: any non-masked input
+    apiKey = currentVal;
+    inputEl.dataset.real = currentVal;
+    localStorage.setItem('schedule_ds_key', apiKey);
+  }
+  // If field is empty, clear saved key
+  if (!currentVal) {
+    apiKey = '';
+    inputEl.dataset.real = '';
+    localStorage.removeItem('schedule_ds_key');
   }
   aiEnabled = document.getElementById('input-ai-toggle').checked;
   localStorage.setItem('schedule_ai_enabled', aiEnabled);
   closeSettings();
-  showToast(aiEnabled && apiKey ? '✅ AI 解析已启用' : '✅ 已保存（使用离线解析模式）');
+  showToast(aiEnabled && apiKey ? 'AI 解析已启用' : '已保存（使用离线解析模式）');
 }
 
 document.getElementById('input-api-key').addEventListener('focus', function() {
-  if (this.dataset.real) { this.value = this.dataset.real; this.type = 'text'; }
+  this.type = 'text';
+  if (this.dataset.real && this.dataset.real.startsWith('sk-')) {
+    this.value = this.dataset.real;
+  }
 });
 document.getElementById('input-api-key').addEventListener('blur', function() {
-  this.dataset.real = this.value.trim();
-  if (this.value.trim()) {
-    this.value = this.value.trim().slice(0,4) + '****' + this.value.trim().slice(-4);
+  const val = this.value.trim();
+  if (val && val.startsWith('sk-') && val.length > 20) {
+    this.dataset.real = val;
+    this.value = val.slice(0, 6) + '****' + val.slice(-4);
   }
   this.type = 'password';
 });
