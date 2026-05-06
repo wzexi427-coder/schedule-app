@@ -527,6 +527,34 @@
   </div>
 </div>
 
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settings-modal">
+  <div class="modal">
+    <div class="modal-title">设置</div>
+    <div class="form-row">
+      <label class="form-label">DeepSeek API Key</label>
+      <input type="password" class="form-input" id="input-api-key" placeholder="sk-...">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Key 仅存在你手机本地，不会上传到任何服务器</div>
+    </div>
+    <div class="form-row">
+      <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="input-ai-toggle" style="width:auto;accent-color:var(--accent)">
+        <span style="color:var(--text);font-size:14px">启用 AI 智能解析（推荐）</span>
+      </label>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">开启后支持「下个月15号」「这周五下午」等自然语言</div>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeSettings()">取消</button>
+      <button class="modal-btn confirm" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings button -->
+<div style="position:fixed;top:env(safe-area-inset-top,44px);right:16px;z-index:50;padding-top:14px">
+  <button onclick="openSettings()" style="background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:10px;padding:6px 10px;color:var(--muted);font-size:18px;cursor:pointer;line-height:1">&#9881;</button>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -534,6 +562,8 @@
 // ── State ──────────────────────────────────────────────────────────────
 let events = JSON.parse(localStorage.getItem('schedule_events') || '[]');
 let editingId = null;
+let apiKey = localStorage.getItem('schedule_ds_key') || '';
+let aiEnabled = localStorage.getItem('schedule_ai_enabled') !== 'false';
 
 function save() {
   localStorage.setItem('schedule_events', JSON.stringify(events));
@@ -575,6 +605,47 @@ function showToast(msg, type='') {
   clearTimeout(window._toastTimer);
   window._toastTimer = setTimeout(() => t.className = 'toast', 2200);
 }
+
+// ── Settings ───────────────────────────────────────────────────────────
+function openSettings() {
+  document.getElementById('input-api-key').value = apiKey ? apiKey.slice(0,4) + '****' + apiKey.slice(-4) : '';
+  document.getElementById('input-api-key').dataset.real = apiKey;
+  document.getElementById('input-ai-toggle').checked = aiEnabled;
+  document.getElementById('settings-modal').classList.add('show');
+}
+
+function closeSettings() {
+  document.getElementById('settings-modal').classList.remove('show');
+}
+
+function saveSettings() {
+  const raw = document.getElementById('input-api-key').dataset.real || '';
+  const input = document.getElementById('input-api-key').value.trim();
+  // If user typed a new key (doesn't match masked format), save it
+  if (input && !input.includes('****')) {
+    apiKey = input;
+    localStorage.setItem('schedule_ds_key', apiKey);
+  }
+  aiEnabled = document.getElementById('input-ai-toggle').checked;
+  localStorage.setItem('schedule_ai_enabled', aiEnabled);
+  closeSettings();
+  showToast(aiEnabled && apiKey ? '✅ AI 解析已启用' : '✅ 已保存（使用离线解析模式）');
+}
+
+document.getElementById('input-api-key').addEventListener('focus', function() {
+  if (this.dataset.real) { this.value = this.dataset.real; this.type = 'text'; }
+});
+document.getElementById('input-api-key').addEventListener('blur', function() {
+  this.dataset.real = this.value.trim();
+  if (this.value.trim()) {
+    this.value = this.value.trim().slice(0,4) + '****' + this.value.trim().slice(-4);
+  }
+  this.type = 'password';
+});
+
+document.getElementById('settings-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeSettings();
+});
 
 // ── Conflict detection ─────────────────────────────────────────────────
 function getRange(ev) {
@@ -884,16 +955,98 @@ function stopVoice() {
 function resetHint() {
   const hint = document.getElementById('voice-hint');
   hint.className = 'voice-hint';
-  hint.innerHTML = '按住麦克风说出日程，例如：<br>「明天下午三点产品会，两小时」';
+  hint.innerHTML = '按住麦克风说出日程，例如：<br>「下个月15号去成都，三天」';
 }
 
-// ── NLP parser ────────────────────────────────────────────────────────
-function parseAndAdd(text) {
+// ── DeepSeek AI 解析 ──────────────────────────────────────────────────
+async function aiParseSchedule(text) {
+  const now = new Date();
+  const prompt = `你是一个日程解析助手。用户会说一句话描述日程，你需要提取结构化信息。
+
+当前时间：${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日 ${['日','一','二','三','四','五','六'][now.getDay()]}
+
+用户输入：「${text}」
+
+请严格按以下 JSON 格式返回，不要有任何其他文字：
+{"title":"日程标题（精简，去掉时间和地点之外的描述）","date":"YYYY-MM-DD","time":"HH:MM","duration":60}
+
+规则：
+1. date 必须是 YYYY-MM-DD 格式，根据当前时间计算"下个月""下周三""大后天"等相对时间
+2. time 是 24 小时制，如果用户没说具体时间，根据语义推断合理时间（全天活动给 09:00）
+3. duration 单位分钟，没提到就默认 60
+4. title 只保留核心事件描述，去掉时间词和时长词`;
+
+  const resp = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      max_tokens: 200
+    })
+  });
+
+  if (!resp.ok) throw new Error(`API 返回 ${resp.status}`);
+  const data = await resp.json();
+  const content = data.choices[0].message.content.trim();
+
+  // Extract JSON from response
+  const jsonMatch = content.match(/\{[\s\S]*?\}/);
+  if (!jsonMatch) throw new Error('AI 返回格式异常');
+
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  // Validate
+  if (!parsed.date || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.date)) {
+    throw new Error('日期解析失败');
+  }
+  if (!parsed.time || !/^\d{2}:\d{2}$/.test(parsed.time)) {
+    parsed.time = '09:00';
+  }
+  if (!parsed.duration || parsed.duration < 5) {
+    parsed.duration = 60;
+  }
+
+  return {
+    title: parsed.title || text.slice(0, 20),
+    date: parsed.date,
+    time: parsed.time,
+    duration: parseInt(parsed.duration)
+  };
+}
+
+// ── NLP parser (with AI fallback) ─────────────────────────────────────
+async function parseAndAdd(text) {
   const hint = document.getElementById('voice-hint');
+
+  // Try AI first
+  if (aiEnabled && apiKey) {
+    try {
+      hint.className = 'voice-hint processing';
+      hint.textContent = 'AI 解析中...';
+      const result = await aiParseSchedule(text);
+      const conflicts = addEvent(result);
+      hint.className = 'voice-hint success';
+      hint.textContent = `✅ 已添加：${formatDate(result.date)} ${result.time} ${result.title}`;
+      setTimeout(resetHint, 3000);
+      return;
+    } catch (err) {
+      console.warn('AI parse failed, falling back to local:', err);
+      // Fall through to local parser
+    }
+  }
+
+  // Fallback: local regex parser
   const result = parseScheduleText(text);
   if (!result) {
     hint.className = 'voice-hint error';
-    hint.textContent = `未能识别日期时间，请重试\n说法示例：「明天下午3点开会一小时」`;
+    hint.textContent = aiEnabled && !apiKey
+      ? '请先在设置中配置 DeepSeek API Key'
+      : '未能识别日期时间，请重试';
     setTimeout(resetHint, 3000);
     return;
   }
@@ -907,7 +1060,6 @@ function parseScheduleText(text) {
   const now = new Date();
   let date = null, time = null, duration = 60, title = text;
 
-  // ── Date parsing ──
   const dateMap = {
     '今天|今日': 0, '明天|明日': 1, '后天': 2, '大后天': 3,
     '昨天|昨日': -1, '前天': -2
@@ -923,7 +1075,6 @@ function parseScheduleText(text) {
       break;
     }
   }
-  // 星期几
   if (!matched) {
     const weekdays = ['日','一','二','三','四','五','六'];
     const wm = text.match(/(?:下?周|下?星期)([一二三四五六日天])/);
@@ -939,7 +1090,6 @@ function parseScheduleText(text) {
       matched = true;
     }
   }
-  // M月D日
   if (!matched) {
     const mdm = text.match(/(\d{1,2})月(\d{1,2})(?:日|号)/);
     if (mdm) {
@@ -950,12 +1100,8 @@ function parseScheduleText(text) {
       matched = true;
     }
   }
-  if (!date) {
-    // default to today
-    date = now.toISOString().slice(0, 10);
-  }
+  if (!date) date = now.toISOString().slice(0, 10);
 
-  // ── Time parsing ──
   const timePeriods = {
     '凌晨': 0, '早上|早晨|上午': 8, '中午': 12,
     '下午|午后': 14, '傍晚': 17, '晚上|夜里|夜间|深夜': 20
@@ -968,7 +1114,6 @@ function parseScheduleText(text) {
       break;
     }
   }
-  // HH:MM
   let tm = text.match(/(\d{1,2})[：:](\d{2})/);
   if (tm) {
     let h = parseInt(tm[1]), m = parseInt(tm[2]);
@@ -977,43 +1122,31 @@ function parseScheduleText(text) {
     time = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
     title = title.replace(tm[0], '');
   } else {
-    // X点Y分 or X点半
     const ptm = text.match(/(\d{1,2})点(?:([一二三四五六七八九十\d]+)分|半)?/);
     if (ptm) {
       let h = parseInt(ptm[1]);
       let m = 0;
       if (ptm[2] === '半') m = 30;
-      else if (ptm[2]) {
-        m = parseChineseNum(ptm[2]);
-      }
+      else if (ptm[2]) m = parseChineseNum(ptm[2]);
       if (periodBase >= 12 && h < 12) h += 12;
-      else if (periodBase === -1 && h < 7) h += 12; // 智能推断下午
+      else if (periodBase === -1 && h < 7) h += 12;
       if (periodBase === 0 && h >= 12) h = 0;
       time = `${String(Math.min(h,23)).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
       title = title.replace(ptm[0], '');
     }
   }
 
-  // ── Duration parsing ──
   const dm = text.match(/(\d+(?:\.\d+)?)\s*(?:个)?\s*小时(?:(\d+)分)?/);
   if (dm) {
     duration = Math.round(parseFloat(dm[1]) * 60) + (parseInt(dm[2]) || 0);
     title = title.replace(dm[0], '');
   } else {
     const dm2 = text.match(/(\d+)\s*分钟/);
-    if (dm2) {
-      duration = parseInt(dm2[1]);
-      title = title.replace(dm2[0], '');
-    }
+    if (dm2) { duration = parseInt(dm2[1]); title = title.replace(dm2[0], ''); }
   }
 
-  // ── Clean title ──
-  title = title
-    .replace(/，|,|。|\.|！|!|？|\?/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  title = title.replace(/，|,|。|\.|！|!|？|\?/g, ' ').replace(/\s+/g, ' ').trim();
   if (!title) title = text.replace(/[，,。.！!？?]/g, '').trim() || '日程';
-
   return { title, date, time: time || '09:00', duration };
 }
 
@@ -1025,6 +1158,13 @@ function parseChineseNum(s) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
+// Pre-fill API key if first time
+if (apiKey) {
+  // Key already set
+} else {
+  // Will prompt user on first voice use
+}
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
